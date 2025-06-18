@@ -1,20 +1,19 @@
-name: Lint & pages deploy
+name: Deploy to GitHub Pages
 
-on: [push]
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: write   # <-- allow the push
 
 jobs:
   pages:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: run prettier/eslint if you have them
-      #- run: npm ci
-      #- run: npm run lint
-
-      # Deploy to GitHub Pages (if you’re using it)
       - uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
+          publish_dir: .          # root of your static site
