@@ -242,8 +242,9 @@ function renderVisualiser(containerEl, config = CONFIG) {
   buildLegend(document.getElementById('legend'), config);
 
   config.stages.forEach((s, idx) => {
-    const g = new Konva.Group({ x: idx * groupSpacing, y: worldToPx(0.25, config.scale) });
-    stage.add(g);
+    const layer = new Konva.Layer({ x: idx * groupSpacing, y: worldToPx(0.25, config.scale) });
+    stage.add(layer);
+    const g = layer; // treat layer as group for downstream calls
     const heights = {
       water: idx === config.stages.length - 1 ? config.beakerHeight / 2 : config.beakerHeight,
       organic: idx === 0 ? config.beakerHeight * 0.3 : 0
