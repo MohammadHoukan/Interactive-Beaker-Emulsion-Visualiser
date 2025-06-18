@@ -26,6 +26,12 @@ export const CONFIG = {
 // Utility functions -----------------------------------------------------------
 const randRange = (a, b) => a + Math.random() * (b - a);
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function intersects(a, b) {
+  return a.x < b.x + b.width &&
+         a.x + a.width > b.x &&
+         a.y < b.y + b.height &&
+         a.y + a.height > b.y;
+}
 
 function worldToPx(val, scale) {
   return val * scale;
@@ -51,9 +57,12 @@ function drawLiquids(group, stageIdx, cfg, heights) {
   const hWater = worldToPx(heights.water, scale);
   const hOrganic = worldToPx(heights.organic || 0, scale);
 
+  // top of water layer sits above organic layer (if present)
+  const waterTop = worldToPx(beakerHeight - heights.water - heights.organic, scale);
+
   const waterRect = new Konva.Rect({
     x: 0,
-    y: worldToPx(beakerHeight, scale) - hWater,
+    y: waterTop,
     width,
     height: hWater,
     fill: '#85c1e9',
@@ -62,10 +71,10 @@ function drawLiquids(group, stageIdx, cfg, heights) {
   group.add(waterRect);
 
   let organicRect = null;
-  if (stageIdx === 0) {
+  if (stageIdx === 0 && hOrganic > 0) {
     organicRect = new Konva.Rect({
       x: 0,
-      y: worldToPx(beakerHeight, scale) - hWater - hOrganic,
+      y: worldToPx(beakerHeight - heights.organic, scale),
       width,
       height: hOrganic,
       fill: '#fad7a0'
@@ -79,6 +88,11 @@ function drawLiquids(group, stageIdx, cfg, heights) {
 // Generate particle positions avoiding walls and each other
 function createParticles(stageIdx, cfg, heights) {
   const { beakerWidth, particles } = cfg;
+
+  if (stageIdx === 0) {
+    // Premix stage has no discrete particles
+    return [];
+  }
   const radius = stageIdx <= 1 ? particles.radius.droplet : particles.radius.nanoparticle;
   const colour = stageIdx <= 1 ? particles.colour.droplet : particles.colour.nanoparticle;
   const margin = radius * 2;
@@ -109,36 +123,80 @@ function createParticles(stageIdx, cfg, heights) {
 function drawParticles(group, particles, cfg) {
   const { scale, beakerHeight } = cfg;
   particles.forEach(p => {
+    const x = worldToPx(p.x, scale);
+    const y = worldToPx(beakerHeight - p.y, scale);
+    const r = worldToPx(p.radius, scale);
+
     const circle = new Konva.Circle({
-      x: worldToPx(p.x, scale),
-      y: worldToPx(beakerHeight - p.y, scale),
-      radius: worldToPx(p.radius, scale),
+      x,
+      y,
+      radius: r,
       fill: p.colour
     });
     group.add(circle);
+
+    // Wiggly surfactant shell around each particle
+    const shellPoints = [];
+    const segs = 80;
+    for (let i = 0; i <= segs; i++) {
+      const theta = (i / segs) * Math.PI * 2;
+      const rad = r * 1.1 + 3 * Math.sin(8 * theta);
+      shellPoints.push(x + rad * Math.cos(theta), y + rad * Math.sin(theta));
+    }
+    group.add(new Konva.Line({
+      points: shellPoints,
+      closed: true,
+      stroke: cfg.surfactant.colour,
+      strokeWidth: 1.5
+    }));
   });
 }
 
 // Generate surfactant dashes avoiding particles/each other
 function createSurfactant(particles, cfg, heights) {
   const out = [];
+  const boxes = [];
   const { surfactant, beakerWidth } = cfg;
-  const margin = surfactant.amplitude;
+
+  const xMargin = surfactant.length;
+  const yMargin = surfactant.amplitude;
 
   for (let i = 0; i < surfactant.count; i++) {
-    const maxAttempts = 20;
-    let placed = false;
-    for (let j = 0; j < maxAttempts && !placed; j++) {
-      const x = randRange(margin, beakerWidth - margin);
-      const y = randRange(margin, heights.water - margin);
-      const pos = { x, y };
-      const tooCloseParticle = particles.some(p => distance(p, pos) < p.radius * 1.5);
-      const tooCloseDash = out.some(p => distance(p, pos) < surfactant.amplitude * 1.5);
-      if (!tooCloseParticle && !tooCloseDash) {
-        out.push(pos);
-        placed = true;
-      }
+    let tries = 0;
+    let pos;
+    let box;
+    do {
+      const x = randRange(xMargin, beakerWidth - xMargin);
+      const y = randRange(yMargin, heights.water - yMargin);
+      pos = { x, y };
+      box = { x: x - surfactant.length / 2,
+              y: y - surfactant.amplitude,
+              width: surfactant.length,
+              height: surfactant.amplitude * 2 };
+      tries++;
+    } while (
+      tries < 20 && (
+        particles.some(p => intersects(box, {
+          x: p.x - p.radius * 1.2,
+          y: p.y - p.radius * 1.2,
+          width: p.radius * 2.4,
+          height: p.radius * 2.4
+        })) ||
+        boxes.some(b => intersects(b, box))
+      )
+    );
+
+    if (particles.some(p => intersects(box, {
+          x: p.x - p.radius * 1.2,
+          y: p.y - p.radius * 1.2,
+          width: p.radius * 2.4,
+          height: p.radius * 2.4
+        })) || boxes.some(b => intersects(b, box))) {
+      continue;
     }
+
+    boxes.push(box);
+    out.push(pos);
   }
 
   return out;
@@ -192,7 +250,7 @@ function createHandles(stage, stageIdx, cfg, heights, liquids) {
     draggable: true,
     dragBoundFunc(pos) {
       const minY = 0;
-      const maxY = worldToPx(beakerHeight, scale) - (stageIdx === 0 && this === this.organic ? liquids.waterRect.height() + 6 : 0);
+      const maxY = worldToPx(stageIdx === 0 ? beakerHeight - heights.organic : beakerHeight, scale);
       return { x: 0, y: Math.max(minY, Math.min(pos.y, maxY)) };
     }
   };
@@ -204,7 +262,7 @@ function createHandles(stage, stageIdx, cfg, heights, liquids) {
     y: liquids.waterRect.y() - 3
   });
   waterHandle.on('dragmove', () => {
-    heights.water = beakerHeight - waterHandle.y() / scale - waterHandle.height() / scale / 2;
+    heights.water = beakerHeight - heights.organic - (waterHandle.y() + waterHandle.height() / 2) / scale;
     rebuildStage(stage, stageIdx, cfg, heights);
   });
   stage.add(waterHandle);
@@ -215,9 +273,13 @@ function createHandles(stage, stageIdx, cfg, heights, liquids) {
       x: 0,
       y: liquids.organicRect.y() - 3
     });
-    organicHandle.organic = organicHandle; // flag for dragBoundFunc
+    organicHandle.dragBoundFunc = pos => {
+      const minY = 0;
+      const maxY = worldToPx(beakerHeight - heights.water, scale);
+      return { x: 0, y: Math.max(minY, Math.min(pos.y, maxY)) };
+    };
     organicHandle.on('dragmove', () => {
-      heights.organic = beakerHeight - heights.water - organicHandle.y() / scale - organicHandle.height() / scale / 2;
+      heights.organic = beakerHeight - (organicHandle.y() + organicHandle.height() / 2) / scale;
       rebuildStage(stage, stageIdx, cfg, heights);
     });
     stage.add(organicHandle);
@@ -245,9 +307,13 @@ function renderVisualiser(containerEl, config = CONFIG) {
     const layer = new Konva.Layer({ x: idx * groupSpacing, y: worldToPx(0.25, config.scale) });
     stage.add(layer);
     const g = layer; // treat layer as group for downstream calls
+    const organicInit = idx === 0 ? config.beakerHeight * 0.3 : 0;
+    const waterInit = idx === config.stages.length - 1
+      ? config.beakerHeight / 2
+      : config.beakerHeight - organicInit;
     const heights = {
-      water: idx === config.stages.length - 1 ? config.beakerHeight / 2 : config.beakerHeight,
-      organic: idx === 0 ? config.beakerHeight * 0.3 : 0
+      water: waterInit,
+      organic: organicInit
     };
     rebuildStage(g, idx, config, heights);
   });
