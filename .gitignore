@@ -1,0 +1,14 @@
+# Ignore node dependencies
+node_modules/
+
+# OS metadata
+.DS_Store
+
+# Log files
+*.log
+
+# Editor swap files
+*~
+*.swp
+*.swo
+*.swn
